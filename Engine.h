@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "GameObject.h"
+class Scene;
 
 // Forward declare RenderGraph to avoid including heavy headers in Engine.h
 class RenderGraph;
@@ -41,6 +42,10 @@ public:
     void Stop();
     void TogglePlay() { if (isPlaying_) Stop(); else Play(); }
 
+    // Active scene to control when entering/exiting play mode
+    void SetActiveScene(Scene* scene) { activeScene_ = scene; }
+    Scene* GetActiveScene() const { return activeScene_; }
+
 private:
     Engine();
     ~Engine();
@@ -48,6 +53,9 @@ private:
     bool running_;
     bool isPlaying_ = false;
     std::vector<std::shared_ptr<GameObject>> objects_;
+
+    // Non-owning pointer to the currently edited scene (may be null)
+    Scene* activeScene_ = nullptr;
 
     // Render pipeline core
     std::unique_ptr<RenderGraph> renderGraph_;

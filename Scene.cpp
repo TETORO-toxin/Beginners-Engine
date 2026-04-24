@@ -12,14 +12,62 @@ void Scene::AddRootObject(std::shared_ptr<GameObject> obj) {
     if (!obj) return;
     if (obj->IsPrefab()) return;
     roots_.push_back(obj);
+    // Awake immediately for editor-time root
     obj->Awake();
+    if (inPlayMode_) {
+        // also add to runtime roots if playing
+        auto inst = obj->Clone();
+        playRoots_.push_back(inst);
+        inst->Awake();
+    }
+
     RebuildColliderList();
+}
+
+std::vector<std::string> Scene::CollectOverridesFor(const std::shared_ptr<GameObject>& instance) const {
+    std::vector<std::string> out;
+    if (!instance) return out;
+    // If this instance references a prefab asset, attempt to load prefab and compare
+    std::string prefabPath = instance->GetPrefabSourcePath();
+    if (prefabPath.empty()) return out;
+    auto prefab = Serializer::LoadPrefab(prefabPath);
+    if (!prefab) return out;
+    // Compare transform x/y only for minimal implementation
+    if (fabsf(instance->transform().x - prefab->transform().x) > 1e-6f) {
+        out.push_back("PROP:" + instance->name() + ":transform.x:" + std::to_string(instance->transform().x));
+    }
+    if (fabsf(instance->transform().y - prefab->transform().y) > 1e-6f) {
+        out.push_back("PROP:" + instance->name() + ":transform.y:" + std::to_string(instance->transform().y));
+    }
+    return out;
+}
+
+void Scene::ApplyOverridesTo(const std::shared_ptr<GameObject>& instance, const std::vector<std::string>& overrides) {
+    if (!instance) return;
+    for (auto& o : overrides) {
+        // expected format PROP:Name:field:val
+        if (o.rfind("PROP:",0) != 0) continue;
+        size_t p1 = o.find(':',5);
+        if (p1 == std::string::npos) continue;
+        size_t p2 = o.find(':', p1+1);
+        if (p2 == std::string::npos) continue;
+        std::string iname = o.substr(5, p1-5);
+        std::string field = o.substr(p1+1, p2 - (p1+1));
+        std::string val = o.substr(p2+1);
+        if (iname != instance->name()) continue;
+        if (field == "transform.x") instance->transform().x = std::stof(val);
+        else if (field == "transform.y") instance->transform().y = std::stof(val);
+    }
 }
 
 void Scene::RemoveRootObject(std::shared_ptr<GameObject> obj) {
     // if removed object is selected, clear selection
     if (!selected_.expired() && selected_.lock() == obj) selected_.reset();
     roots_.erase(std::remove(roots_.begin(), roots_.end(), obj), roots_.end());
+    if (inPlayMode_) {
+        // also remove any runtime clones that match by name (best-effort)
+        playRoots_.erase(std::remove_if(playRoots_.begin(), playRoots_.end(), [&](const std::shared_ptr<GameObject>& p){ return p->name() == obj->name(); }), playRoots_.end());
+    }
     RebuildColliderList();
 }
 
@@ -31,23 +79,27 @@ void Scene::AddPrefab(std::shared_ptr<GameObject> prefab) {
 }
 
 void Scene::Awake() {
-    for (auto& r : roots_) r->Awake();
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) r->Awake();
     RebuildColliderList();
 }
 
 void Scene::Start() {
-    for (auto& r : roots_) r->Start();
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) r->Start();
 }
 
 void Scene::Update() {
-    // update all root objects
-    for (auto& r : roots_) r->Update();
+    // update all root objects (use playRoots_ when in play mode)
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) r->Update();
     // collision / AABB handling
     PhysicsStep();
 }
 
 void Scene::Render() {
-    for (auto& r : roots_) {
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) {
         if (r->IsPrefab()) continue; // never render prefab templates
         r->Render();
     }
@@ -57,12 +109,20 @@ std::shared_ptr<GameObject> Scene::Instantiate(std::shared_ptr<GameObject> prefa
     if (!prefab) return nullptr;
     auto inst = prefab->Clone();
     AddRootObject(inst);
+    // if in play mode, also create runtime clone used in playRoots_
+    if (inPlayMode_) {
+        auto runInst = prefab->Clone();
+        playRoots_.push_back(runInst);
+        runInst->Awake();
+        runInst->Start();
+    }
     return inst;
 }
 
 void Scene::RebuildColliderList() {
     colliders_.clear();
-    for (auto& r : roots_) {
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) {
         if (r->IsPrefab()) continue;
         for (auto& c : r->GetAllComponents()) {
             auto col = std::dynamic_pointer_cast<Collider>(c);
@@ -118,14 +178,40 @@ bool Scene::Load(const std::string& path) {
     return ok;
 }
 
+void Scene::EnterPlayMode() {
+    if (inPlayMode_) return;
+    playRoots_.clear();
+    // deep-clone root objects for runtime
+    for (auto& r : roots_) {
+        if (r->IsPrefab()) continue;
+        auto clone = r->Clone();
+        playRoots_.push_back(clone);
+    }
+    inPlayMode_ = true;
+    // initialize runtime clones
+    for (auto& r : playRoots_) r->Awake();
+    for (auto& r : playRoots_) r->Start();
+    RebuildColliderList();
+}
+
+void Scene::ExitPlayMode() {
+    if (!inPlayMode_) return;
+    // discard runtime clones
+    playRoots_.clear();
+    inPlayMode_ = false;
+    // restore editor-time state: wake editor roots so inspector shows expected values
+    for (auto& r : roots_) r->Awake();
+    RebuildColliderList();
+}
+
 int Scene::RenderToTarget(int width, int height, const Camera2D& cam) {
     int screen = MakeScreen(width, height, TRUE);
     if (screen == -1) return 0;
     int prev = GetDrawScreen();
     SetDrawScreen(screen);
     ClearDrawScreen();
-
-    for (auto& r : roots_) {
+    auto& src = inPlayMode_ ? playRoots_ : roots_;
+    for (auto& r : src) {
         if (r->IsPrefab()) continue; // never render prefab templates
         float ox = r->transform().x;
         float oy = r->transform().y;

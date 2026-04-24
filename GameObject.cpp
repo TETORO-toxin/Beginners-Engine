@@ -67,14 +67,33 @@ std::shared_ptr<GameObject> GameObject::Clone() const {
     for (auto& c : components_) {
         auto copy = c->Clone();
         if (copy) {
-            copy->owner = clone.get();
             clone->components_.push_back(copy);
         }
     }
+    // now that components_ entries are in clone, set owner pointers
+    for (auto& comp : clone->components_) comp->owner = clone.get();
+    // preserve prefab source info
+    clone->prefabAssetPath_ = prefabAssetPath_;
+    clone->prefabSourcePath_ = prefabSourcePath_;
     return clone;
 }
 
 void GameObject::RemoveComponentAt(size_t index) {
     if (index >= components_.size()) return;
     components_.erase(components_.begin() + index);
+}
+
+void GameObject::ApplyFrom(const GameObject& src) {
+    // Copy transform and simple fields, but keep our own id and prefab flags
+    transform_ = src.transform_;
+    name_ = src.name_;
+    // Components: naive approach -- clear and clone from src
+    components_.clear();
+    for (auto& c : src.GetAllComponents()) {
+        auto copy = c->Clone();
+        if (copy) {
+            components_.push_back(copy);
+        }
+    }
+    for (auto& comp : components_) comp->owner = this;
 }

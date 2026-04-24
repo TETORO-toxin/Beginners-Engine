@@ -127,3 +127,20 @@ std::shared_ptr<GameObject> Serializer::LoadPrefab(const std::string& path) {
     if (current) current->SetPrefab(true);
     return current;
 }
+
+bool Serializer::SavePrefabOverrides(const std::string& path, const std::vector<std::string>& overrides) {
+    std::ofstream ofs(path);
+    if (!ofs) return false;
+    for (auto& l : overrides) ofs << l << "\n";
+    return true;
+}
+
+bool Serializer::LoadPrefabOverrides(const std::string& path, std::vector<std::string>& outOverrides) {
+    std::ifstream ifs(path);
+    if (!ifs) return false;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (!line.empty()) outOverrides.push_back(line);
+    }
+    return true;
+}

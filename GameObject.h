@@ -62,6 +62,18 @@ public:
     // Prefabï°êª
     std::shared_ptr<GameObject> Clone() const;
 
+    // Prefab asset path (for prefab templates loaded from disk)
+    void SetPrefabAssetPath(const std::string& p) { prefabAssetPath_ = p; }
+    const std::string& GetPrefabAssetPath() const { return prefabAssetPath_; }
+
+    // For instances, record source prefab asset path so overrides can be applied/reverted
+    void SetPrefabSourcePath(const std::string& p) { prefabSourcePath_ = p; }
+    const std::string& GetPrefabSourcePath() const { return prefabSourcePath_; }
+    bool IsPrefabInstance() const { return !prefabSourcePath_.empty(); }
+
+    // Overwrite this GameObject's editable state from another (used for revert/apply)
+    void ApplyFrom(const GameObject& src);
+
     // å≈óLID
     int id() const { return id_; }
 
@@ -78,4 +90,6 @@ private:
     std::weak_ptr<GameObject> parent_;
     bool started_ = false;
     bool prefab_ = false;
+    std::string prefabAssetPath_;
+    std::string prefabSourcePath_;
 };

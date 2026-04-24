@@ -25,6 +25,17 @@ public:
     void Update();
     void Render();
 
+    // Play mode control: create a runtime copy of scene roots and operate on it while playing
+    void EnterPlayMode();
+    void ExitPlayMode();
+    bool IsInPlayMode() const { return inPlayMode_; }
+
+    // Prefab override support (editor): collect overrides for a given instance relative to its prefab
+    // Returns textual override entries (e.g. "PROP:InstanceName:transform.x:12.3")
+    std::vector<std::string> CollectOverridesFor(const std::shared_ptr<GameObject>& instance) const;
+    // Apply simple overrides back to an instance (used when applying or reverting)
+    void ApplyOverridesTo(const std::shared_ptr<GameObject>& instance, const std::vector<std::string>& overrides);
+
     // Prefab instantiation (returns clone)
     std::shared_ptr<GameObject> Instantiate(std::shared_ptr<GameObject> prefab);
 
@@ -79,11 +90,14 @@ public:
 
 private:
     std::vector<std::shared_ptr<GameObject>> roots_;
+    // runtime-only roots used during Play mode (cloned from `roots_`)
+    std::vector<std::shared_ptr<GameObject>> playRoots_;
     std::vector<std::shared_ptr<GameObject>> prefabs_;
 
     std::weak_ptr<GameObject> selected_;
 
     std::vector<Collider*> colliders_;
+    bool inPlayMode_ = false;
 
     void RebuildColliderList();
     void PhysicsStep();

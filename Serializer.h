@@ -12,4 +12,8 @@ namespace Serializer {
     // Prefab save/load for editor: store a single GameObject template
     bool SavePrefab(const std::string& path, std::shared_ptr<GameObject> prefab);
     std::shared_ptr<GameObject> LoadPrefab(const std::string& path);
+
+    // Save/load simple override diffs (keyed by prefab filename). Format is minimal and textual.
+    bool SavePrefabOverrides(const std::string& path, const std::vector<std::string>& overrides);
+    bool LoadPrefabOverrides(const std::string& path, std::vector<std::string>& outOverrides);
 }

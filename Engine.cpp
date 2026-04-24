@@ -5,6 +5,7 @@
 #include "DeferredPass.h"
 #include "ForwardPlusPass.h"
 #include <Windows.h>
+#include "Scene.h"
 
 Engine& Engine::Instance() {
     static Engine instance;
@@ -33,12 +34,14 @@ bool Engine::Init() {
 void Engine::Play() {
     if (isPlaying_) return;
     isPlaying_ = true;
+    if (activeScene_) activeScene_->EnterPlayMode();
     for (auto& obj : objects_) obj->Start();
 }
 
 void Engine::Stop() {
     if (!isPlaying_) return;
     isPlaying_ = false;
+    if (activeScene_) activeScene_->ExitPlayMode();
     for (auto& obj : objects_) obj->Awake();
 }
 
@@ -57,16 +60,17 @@ void Engine::Run() {
         prevSpaceDown = curSpaceDown;
 
         // Update
-        for (auto& obj : objects_) {
-            obj->Update();
+        if (activeScene_) {
+            activeScene_->Update();
+        } else {
+            for (auto& obj : objects_) obj->Update();
         }
 
         if (renderGraph_) {
             renderGraph_->Execute();
         } else {
-            for (auto& obj : objects_) {
-                obj->Render();
-            }
+            if (activeScene_) activeScene_->Render();
+            else for (auto& obj : objects_) obj->Render();
         }
 
         ScreenFlip();
