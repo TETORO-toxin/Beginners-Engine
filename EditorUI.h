@@ -16,6 +16,7 @@
 #include "third_party/ModelLoader.h"
 #include "SkinnedMeshRenderer.h"
 #include "EffekseerComponent.h"
+#include "AssetDatabase.h"
 
 namespace EditorUI {
 
@@ -43,6 +44,11 @@ static std::string OpenFileDialogUtf8(const wchar_t* filter = L"All\0*.*\0\0") {
 }
 
 inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int viewportGraph, int screenW, int screenH) {
+    static bool watcherStarted = false;
+    if (!watcherStarted) {
+        AssetDatabase::Instance().StartWatching();
+        watcherStarted = true;
+    }
     int leftW = 220;
     int rightW = 300;
     int bottomH = 180;
@@ -134,43 +140,34 @@ inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int 
     static int assetSelected = -1;
     static int lastClickTime = 0;
 
-    // scan Assets folder using Win32 API
-    assets.clear();
-    WIN32_FIND_DATAA fd;
-    HANDLE hFind = INVALID_HANDLE_VALUE;
-    CreateDirectoryA("Assets", NULL);
-    std::string search = std::string("Assets\\*");
-    hFind = FindFirstFileA(search.c_str(), &fd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if (strcmp(fd.cFileName, ".") != 0 && strcmp(fd.cFileName, "..") != 0) {
-                assets.push_back(fd.cFileName);
-            }
-        } while (FindNextFileA(hFind, &fd) != 0);
-        FindClose(hFind);
-    }
+    // query assets from AssetDatabase (returns e.g. "Assets/foo.obj")
+    assets = AssetDatabase::Instance().GetAllAssetPaths();
 
     int ay = projY + 8;
     int idx = 0;
     for (auto& a : assets) {
-        DrawFormatString(projX + 8, ay + idx * 18, GetColor(200,200,200), "%s", a.c_str());
+        // display only filename
+        std::string display = a;
+        size_t p = display.find_last_of("/\\");
+        if (p != std::string::npos) display = display.substr(p+1);
+        DrawFormatString(projX + 8, ay + idx * 18, GetColor(200,200,200), "%s", display.c_str());
         int mx2, my2; GetMousePoint(&mx2, &my2);
         if (mx2 >= projX + 8 && mx2 <= projX + projW - 8 && my2 >= ay + idx*18 && my2 <= ay + idx*18 + 16 && (GetMouseInput() & MOUSE_INPUT_LEFT) != 0) {
-            int now = GetNowCount();
-            if (assetSelected == idx && now - lastClickTime < 300) {
-                // double click: if .obj then instantiate
-                std::string name = assets[idx];
-                std::string full = std::string("Assets/") + name;
-                if (full.size() >= 4) {
-                    std::string ext = full.substr(full.size()-4);
+                int now = GetNowCount();
+                if (assetSelected == idx && now - lastClickTime < 300) {
+                    // double click: instantiate based on extension
+                    std::string full = assets[idx]; // "Assets/xxx"
+                    std::string name = display; // filename only
+                    if (full.size() >= 4) {
+                        std::string ext = full.substr(full.size()-4);
                     if (ext == ".obj" || ext == ".OBJ") {
-                        auto go = std::make_shared<GameObject>(name);
-                        go->AddComponent<MeshRenderer>(full);
-                        scene.AddRootObject(go);
+                            auto go = std::make_shared<GameObject>(name);
+                            go->AddComponent<MeshRenderer>(full);
+                            scene.AddRootObject(go);
                     } else if (ext == ".fbx" || ext == ".FBX") {
-                        auto go = std::make_shared<GameObject>(name);
-                        // inspect model to decide skinned or static
-                        auto mesh = ModelLoader::LoadModel(full);
+                            auto go = std::make_shared<GameObject>(name);
+                            // inspect model to decide skinned or static
+                            auto mesh = ModelLoader::LoadModel(full);
                         if (mesh && (!mesh->boneNames.empty() || !mesh->animations.empty())) {
                             go->AddComponent<SkinnedMeshRenderer>(full);
                             go->AddComponent<LabelComponent>(name + " (Skinned)");
@@ -181,10 +178,10 @@ inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int 
                         scene.AddRootObject(go);
                     } else if (ext == ".efk" || ext == ".EFK") {
                         // Effekseer effect file: create GameObject with EffekseerComponent if available
-                        auto go = std::make_shared<GameObject>(name);
-                        // Prefer to add EffekseerComponent so effect can be played if library present
-                        go->AddComponent<EffekseerComponent>(full);
-                        scene.AddRootObject(go);
+                            auto go = std::make_shared<GameObject>(name);
+                            // Prefer to add EffekseerComponent so effect can be played if library present
+                            go->AddComponent<EffekseerComponent>(full);
+                            scene.AddRootObject(go);
                     }
                 }
             }
@@ -198,20 +195,12 @@ inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int 
     if (UI::Button(projX + 8, impY, 140, 22, "Import Asset...")) {
         std::string path = OpenFileDialogUtf8(L"Asset Files\0*.obj;*.fbx;*.efk\0All Files\0*.*\0\0");
         if (!path.empty()) {
-            // copy into Assets folder using Win32 wide-char functions
-            int req = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, NULL, 0);
-            if (req > 0) {
-                std::wstring wpath; wpath.resize(req);
-                MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &wpath[0], req);
-                wchar_t fname[MAX_PATH];
-                _wsplitpath_s(wpath.c_str(), NULL, 0, NULL, 0, fname, MAX_PATH, NULL, 0);
-                std::wstring wdest = std::wstring(L"Assets\\") + fname;
-                CopyFileW(wpath.c_str(), wdest.c_str(), FALSE);
+            // Use AssetDatabase to import and create .meta
+            std::string rel = AssetDatabase::Instance().ImportAsset(path);
+            if (!rel.empty()) {
                 // attempt to load as sequence
-                // build UTF-8 dest filename
-                int fnReq = WideCharToMultiByte(CP_UTF8, 0, fname, -1, nullptr, 0, nullptr, nullptr);
-                std::string fnUtf8;
-                if (fnReq > 0) { fnUtf8.resize(fnReq - 1); WideCharToMultiByte(CP_UTF8, 0, fname, -1, &fnUtf8[0], fnReq, nullptr, nullptr); }
+                size_t p = rel.find_last_of("/\\");
+                std::string fnUtf8 = (p == std::string::npos) ? rel : rel.substr(p+1);
                 std::string example = std::string("Assets/") + fnUtf8;
                 auto seq = ObjSequenceLoader::LoadSequence(example);
                 if (seq) {
@@ -221,7 +210,6 @@ inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int 
                     go->AddComponent<SkinnedMeshRenderer>(*smr);
                     scene.AddRootObject(go);
                 } else {
-                    // If the imported file is an Effekseer (.efk) file, just add as asset and create placeholder
                     if (fnUtf8.size() >= 4) {
                         std::string ext = fnUtf8.substr(fnUtf8.size()-4);
                         if (ext == ".efk" || ext == ".EFK") {
@@ -231,6 +219,8 @@ inline void DrawEditor(Scene& scene, std::shared_ptr<GameObject> &selected, int 
                         }
                     }
                 }
+                // ensure DB rescans soon (import updates internal state)
+                AssetDatabase::Instance().ScanAssets();
             }
         }
     }
